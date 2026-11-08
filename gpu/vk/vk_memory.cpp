@@ -233,10 +233,6 @@ void guest_pages_set(uint64_t lo, uint64_t hi, uint64_t address) {
         const uint64_t first = w.first + ((a0 - w.base) >> 12), count = (a1 - a0 + 0xFFF) >> 12;
         const uint64_t at = address ? address + (a0 - lo) : 0;
         if (table_defer && !now) {
-            if (at && par_active.load(std::memory_order_relaxed)) {
-                for (uint64_t i = 0; i < count; i++)
-                    if (!guest_pages[first + i]) guest_pages[first + i] = at + (i << 12);
-            }
             table_pending.push_back({first, count, at});
             continue;
         }

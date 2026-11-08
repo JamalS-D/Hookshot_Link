@@ -441,12 +441,9 @@ Shader::Profile make_profile() {
     p.support_vertex_instance_id = false;
     p.support_float_controls = true;
     p.support_separate_denorm_behavior = p.support_separate_rounding_mode = true;
-    p.support_fp16_denorm_preserve = p.support_fp16_denorm_flush = true;
     p.support_fp32_denorm_preserve = p.support_fp32_denorm_flush = true;
     p.support_fp16_signed_zero_nan_preserve = p.support_fp32_signed_zero_nan_preserve = true;
     p.support_vote = true;
-    p.support_shuffle_relative = dev.subgroup_shuffle_relative;
-    p.support_quad_shuffles = dev.subgroup_quad;
     p.supported_subgroup_stages = VK_SHADER_STAGE_ALL;
     p.support_viewport_index_layer_non_geometry = true;
     p.support_typeless_image_loads = true;
@@ -463,9 +460,6 @@ Shader::Profile make_profile() {
         dev.vk12.shaderUniformTexelBufferArrayNonUniformIndexing != VK_FALSE;
     p.support_storage_texel_buffer_array_nonuniform_indexing =
         dev.vk12.shaderStorageTexelBufferArrayNonUniformIndexing != VK_FALSE;
-    p.support_explicit_workgroup_layout = dev.workgroup_explicit_layout;
-    p.support_workgroup_layout_8bit_access = dev.workgroup_explicit_8bit;
-    p.support_workgroup_layout_16bit_access = dev.workgroup_explicit_16bit;
     p.warp_size_potentially_larger_than_guest = false;
     p.lower_left_origin_mode = false;
     p.need_declared_frag_colors = false;

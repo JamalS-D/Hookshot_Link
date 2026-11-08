@@ -10,7 +10,22 @@ def emsdk():
 def mingw():
     """(hookshot) HOOKSHOT_MINGW=<llvm-mingw folder>: Windows builds with that toolchain's clang, headers and libraries (the GNU ABI
     on the UCRT), as TotK Recomp's installer does: nothing of Visual Studio or the Windows SDK is needed. Empty: the MSVC target"""
-    return os.environ.get("HOOKSHOT_MINGW", "") if os.name == "nt" else ""
+    if os.name != "nt":
+        return ""
+    val = os.environ.get("HOOKSHOT_MINGW", "")
+    if val and os.path.isfile(os.path.join(val, "bin", "clang.exe")):
+        return val
+    appdata = os.environ.get("LOCALAPPDATA", "")
+    if appdata:
+        versions = os.path.join(appdata, "HookshotBuilder", "versions")
+        if os.path.isdir(versions):
+            for d in sorted(os.listdir(versions), reverse=True):
+                for rel in ("HookshotBuilder/tools/llvm-mingw", "tools/llvm-mingw", "llvm-mingw"):
+                    cand = os.path.join(versions, d, rel.replace("/", os.sep))
+                    if os.path.isfile(os.path.join(cand, "bin", "clang.exe")):
+                        os.environ["HOOKSHOT_MINGW"] = cand
+                        return cand
+    return val
 
 
 def find(tool):

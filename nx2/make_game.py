@@ -344,11 +344,12 @@ def ensure_builder_tools():
 
     tools = None
     if os.path.isdir(versions):
-        candidates = sorted(
-            [os.path.join(versions, d, "HookshotBuilder", "tools") for d in os.listdir(versions)],
-            key=lambda p: os.path.getmtime(p) if os.path.exists(p) else 0,
-            reverse=True,
-        )
+        candidates = []
+        for d in sorted(os.listdir(versions), reverse=True):
+            for rel in ("HookshotBuilder/tools", "tools"):
+                p = os.path.join(versions, d, rel.replace("/", os.sep))
+                if os.path.isdir(p):
+                    candidates.append(p)
         for cand in candidates:
             if (os.path.isfile(os.path.join(cand, "llvm-mingw", "bin", "clang.exe")) and
                     os.path.isdir(os.path.join(cand, "cpm")) and
@@ -827,7 +828,10 @@ def main():
     built = os.path.join(work, "sa", "build")
     # (the new files are copied in beside the old ones as <name>.new and swapped in only once all are complete: a build stopped while
     # copying, or a full disk, left a half-written 460 MB hookshot.exe and no game to play. The old game stays playable until the swap)
-    staged = [(os.path.join(built, n), os.path.join(out, n)) for n in BESIDE if os.path.exists(os.path.join(built, n))]
+    staged = []
+    for n in BESIDE:
+        if os.path.exists(os.path.join(built, n)):
+            staged.append((os.path.join(built, n), os.path.join(out, n)))
     staged.append((os.path.join(work, "sa", "image", "image.bin"), os.path.join(out, "image.bin")))
     for src, dst in staged:
         try:
