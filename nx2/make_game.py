@@ -35,6 +35,45 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 PY = [sys.executable, "-I", "-u", "-X", "utf8"]   # (utf8: every step's output in UTF-8 whatever the console's code page: lift.py crashed on a letter, #180)   # (-u: the steps' output as it comes, not in 8 KB blocks minutes apart)
+
+
+def ensure_builder_python():
+    """Ensure PY points to an interpreter that has the required modules (zstandard, lz4, numpy, capstone).
+    If the current interpreter lacks them, search for HookshotBuilder's bundled Python."""
+    global PY
+    try:
+        import zstandard  # noqa: F401
+        import lz4        # noqa: F401
+        import numpy      # noqa: F401
+        import capstone   # noqa: F401
+        return PY[0]
+    except ImportError:
+        pass
+
+    candidates = []
+    if os.environ.get("HOOKSHOT_PYTHON") and os.path.isfile(os.environ["HOOKSHOT_PYTHON"]):
+        candidates.append(os.environ["HOOKSHOT_PYTHON"])
+    if os.environ.get("HOOKSHOT_MINGW"):
+        candidates.append(os.path.join(os.path.dirname(os.environ["HOOKSHOT_MINGW"]), "python", "python.exe"))
+    base = os.path.join(os.environ.get("LOCALAPPDATA", ROOT), "HookshotBuilder")
+    versions = os.path.join(base, "versions")
+    if os.path.isdir(versions):
+        for d in sorted(os.listdir(versions), reverse=True):
+            for rel in ("HookshotBuilder/tools/python/python.exe", "tools/python/python.exe", "python/python.exe"):
+                candidates.append(os.path.join(versions, d, rel.replace("/", os.sep)))
+    candidates.append(os.path.join(base, "tools", "python", "python.exe"))
+    candidates.append(os.path.join(ROOT, "tools", "python", "python.exe"))
+    for cand in candidates:
+        if os.path.isfile(cand):
+            test = subprocess.run([cand, "-I", "-c", "import zstandard, lz4, numpy, capstone"],
+                                  capture_output=True)
+            if test.returncode == 0:
+                PY[:] = [cand, "-I", "-u", "-X", "utf8"]
+                return cand
+    return None
+
+
+ensure_builder_python()
 BUILD_ID = "e0f3ccfa"   # (the version the patches, the hot list and the profile were made from)
 STARTED = time.time()   # (the build's total time, kept in build_times.json and said as @@times)
 sys.path[:0] = [HERE, os.path.join(ROOT, "third_party", "a64-kit", "tools")]   # (python -I leaves the script folder off)
@@ -463,8 +502,7 @@ def ensure_builder_tools():
                     candidates.append(p)
         for cand in candidates:
             if (os.path.isfile(os.path.join(cand, "llvm-mingw", "bin", "clang.exe")) and
-                    os.path.isdir(os.path.join(cand, "cpm")) and
-                    os.path.isdir(os.path.join(cand, "third_party", "opus"))):
+                    os.path.isdir(os.path.join(cand, "cpm"))):
                 tools = cand
                 break
 
@@ -572,7 +610,7 @@ def bundled_mingw():
                  "(a false alarm on unsigned programs): restore them from its quarantine or allow the Hookshot Builder folder, "
                  "then unzip HookshotBuilder.zip again and build. Visual Studio is not needed."
                  % (", ".join(missing) or "bin", os.path.join(here, "bin")))
-        elif "toolchain" not in sys.modules:
+        else:
             emsdk_clang = os.path.join(os.environ.get("EMSDK") or r"C:\emsdk", "upstream", "bin", "clang.exe")
             if not os.path.isfile(emsdk_clang):
                 ensure_builder_tools()

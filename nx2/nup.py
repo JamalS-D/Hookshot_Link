@@ -253,8 +253,12 @@ class Nup:
         self.f.seek(r[3])
         left = r[2]
         if packed:
-            left = r[4] if r[5] == 1 else left + (1 << 16)   # explicit extents must not read the next member
-            import zstandard
+            try:
+                import zstandard
+            except ModuleNotFoundError:
+                sys.exit("@@error The 'zstandard' module is required to decompress game packages. "
+                         "Install it with: pip install zstandard\n"
+                         "Or run the build using Hookshot's bundled Python (%LOCALAPPDATA%\\HookshotBuilder\\...\\python.exe).")
             d = zstandard.ZstdDecompressor().decompressobj()
             got = 0
             while left and not getattr(d, "eof", False):

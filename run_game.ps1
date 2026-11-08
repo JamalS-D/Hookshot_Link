@@ -22,11 +22,10 @@ New-Item -ItemType Directory -Force -Path $Downloads, $Versions | Out-Null
 
 $Tools = Get-ChildItem -Path $Versions -Directory -ErrorAction SilentlyContinue |
     Sort-Object LastWriteTime -Descending |
-    ForEach-Object { Join-Path $_.FullName "HookshotBuilder\tools" } |
+    ForEach-Object { (Join-Path $_.FullName "HookshotBuilder\tools"), (Join-Path $_.FullName "tools") } |
     Where-Object {
         (Test-Path (Join-Path $_ "llvm-mingw\bin\clang.exe")) -and
-        (Test-Path (Join-Path $_ "cpm")) -and
-        (Test-Path (Join-Path $_ "third_party\opus"))
+        (Test-Path (Join-Path $_ "cpm"))
     } |
     Select-Object -First 1
 
