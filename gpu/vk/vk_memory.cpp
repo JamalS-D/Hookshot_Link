@@ -233,6 +233,10 @@ void guest_pages_set(uint64_t lo, uint64_t hi, uint64_t address) {
         const uint64_t first = w.first + ((a0 - w.base) >> 12), count = (a1 - a0 + 0xFFF) >> 12;
         const uint64_t at = address ? address + (a0 - lo) : 0;
         if (table_defer && !now) {
+            if (at && par_active.load(std::memory_order_relaxed)) {
+                for (uint64_t i = 0; i < count; i++)
+                    if (!guest_pages[first + i]) guest_pages[first + i] = at + (i << 12);
+            }
             table_pending.push_back({first, count, at});
             continue;
         }
@@ -260,6 +264,15 @@ bool memory_table_flush() {
     std::stable_sort(pages.begin(), pages.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
     std::vector<uint64_t> run;
     VkCommandBuffer cmd = upload_command_buffer();
+    VkMemoryBarrier2 b{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    b.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+    b.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    b.dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+    b.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.memoryBarrierCount = 1;
+    dep.pMemoryBarriers = &b;
+    vkCmdPipelineBarrier2(cmd, &dep);
     uint64_t run_first = 0;
     const auto emit = [&] {
         if (!run.empty()) vkCmdUpdateBuffer(cmd, guest_pages_buffer, run_first * 8, run.size() * 8, run.data());
@@ -1934,7 +1947,7 @@ BufferRef gpu_buffer_bind(uint64_t gpu, uint64_t size, bool written) {
     // pool every so many frames as the per-frame data moves on). Not when this part already wrote it in guest memory:
     // the copy at the part's start would miss that. RX_VK_MIRROR_DEFER=1: at the next submission, as before)
     static const bool defer = getenv("RX_VK_MIRROR_DEFER") != nullptr;
-    if (p->mstate == Pool::MIRROR_NONE && !defer && p->direct_write_epoch != mirror_epoch && mirror_make(*p)) {
+    if (p->mstate == Pool::MIRROR_NONE && !defer && !par && p->direct_write_epoch != mirror_epoch && mirror_make(*p)) {
         publish_cap_ranges();
         static int64_t made_now;
         if (++made_now % 200 == 1)

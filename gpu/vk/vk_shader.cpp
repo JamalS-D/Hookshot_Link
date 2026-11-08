@@ -441,19 +441,31 @@ Shader::Profile make_profile() {
     p.support_vertex_instance_id = false;
     p.support_float_controls = true;
     p.support_separate_denorm_behavior = p.support_separate_rounding_mode = true;
+    p.support_fp16_denorm_preserve = p.support_fp16_denorm_flush = true;
     p.support_fp32_denorm_preserve = p.support_fp32_denorm_flush = true;
     p.support_fp16_signed_zero_nan_preserve = p.support_fp32_signed_zero_nan_preserve = true;
     p.support_vote = true;
+    p.support_shuffle_relative = dev.subgroup_shuffle_relative;
+    p.support_quad_shuffles = dev.subgroup_quad;
     p.supported_subgroup_stages = VK_SHADER_STAGE_ALL;
     p.support_viewport_index_layer_non_geometry = true;
     p.support_typeless_image_loads = true;
     p.support_demote_to_helper_invocation = true;
     p.support_int64_atomics = true;
+    p.support_shared_int64_atomics = dev.vk12.shaderSharedInt64Atomics != VK_FALSE;
     p.support_derivative_control = true;
     p.support_native_ndc = false;   // (the vertex stage converts NVN's -1..1 depth: RuntimeInfo::convert_depth_mode)
     p.support_scaled_attributes = false;   // (*_UI2F / *_I2F read as integers, converted in the shader: R32 has no scaled format)
     p.support_multi_viewport = true;
     p.support_sampled_image_array_nonuniform_indexing = true;
+    p.support_storage_image_array_nonuniform_indexing = dev.vk12.shaderStorageImageArrayNonUniformIndexing != VK_FALSE;
+    p.support_uniform_texel_buffer_array_nonuniform_indexing =
+        dev.vk12.shaderUniformTexelBufferArrayNonUniformIndexing != VK_FALSE;
+    p.support_storage_texel_buffer_array_nonuniform_indexing =
+        dev.vk12.shaderStorageTexelBufferArrayNonUniformIndexing != VK_FALSE;
+    p.support_explicit_workgroup_layout = dev.workgroup_explicit_layout;
+    p.support_workgroup_layout_8bit_access = dev.workgroup_explicit_8bit;
+    p.support_workgroup_layout_16bit_access = dev.workgroup_explicit_16bit;
     p.warp_size_potentially_larger_than_guest = false;
     p.lower_left_origin_mode = false;
     p.need_declared_frag_colors = false;

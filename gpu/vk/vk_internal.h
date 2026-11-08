@@ -48,7 +48,12 @@ struct Device {
          sparse_images = false, // (sparse resident 2D images on the queue: the terrain's huge arrays)
          view_2d_of_3d = false, // (VK_EXT_image_2d_view_of_3d: a 3D texture a 2D sample instruction reads)
          coop_matrix = false,   // (VK_KHR_cooperative_matrix with its feature)
-         native_mma = false;    // (HMMA on it: the cooperative matrix test passed, vk_coopmat.cpp)
+         native_mma = false,    // (HMMA on it: the cooperative matrix test passed, vk_coopmat.cpp)
+         workgroup_explicit_layout = false,
+         workgroup_explicit_8bit = false,
+         workgroup_explicit_16bit = false,
+         subgroup_shuffle_relative = false,
+         subgroup_quad = false;
     bool eds3_polygon = false, eds3_clamp = false, eds3_blend = false, eds3_a2c = false;
     VkPhysicalDeviceVulkan12Features vk12{};
     VkPhysicalDeviceVulkan13Features vk13{};
@@ -240,7 +245,7 @@ inline int64_t prof_now() {
         const uint64_t c0 = HOOKSHOT_RDTSC();
         QueryPerformanceCounter(&a);
         volatile int sink = 0;
-        for (int i = 0; i < 400000; i++) { HOOKSHOT_PAUSE(); sink += 1; }
+        for (int i = 0; i < 400000; i++) { HOOKSHOT_PAUSE(); sink = sink + 1; }
         const uint64_t c1 = HOOKSHOT_RDTSC();
         QueryPerformanceCounter(&b);
         const int64_t dns = perf_ticks_to_ns(b.QuadPart - a.QuadPart, f.QuadPart);

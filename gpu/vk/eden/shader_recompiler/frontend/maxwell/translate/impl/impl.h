@@ -68,6 +68,7 @@ struct TranslatorVisitor {
     // (hookshot) REGMAP_nx2 (register_map_nx2.cpp): the numbers of the word being translated that name the
     // extended registers 256 + n; set from the prefixes before each word, cleared after it
     std::array<u16, 256> register_map{};
+    bool has_register_map{false};
     void ApplyRegisterMap(u64 insn);
     [[nodiscard]] IR::Reg MapReg(IR::Reg reg) const;
 

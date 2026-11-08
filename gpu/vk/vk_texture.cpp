@@ -555,20 +555,52 @@ bool upload_astc_gpu(Texture& tex, uint64_t total, const Ranges* dirty) {
         if (overlaps(dirty, (uint64_t)layer * layer_size + tail0, (uint64_t)(layer + 1) * layer_size)) layers.push_back(layer);
     if (layers.empty()) return true;
     const bool all = layers.size() == tex.layers;
-    const Staging s = staging(tail * layers.size(), std::max<uint64_t>(256, dev.props.limits.minStorageBufferOffsetAlignment));
-    if (!s.buffer) return false;
-    std::vector<uint8_t> scratch;
-    for (size_t k = 0; k < layers.size(); k++) {
-        const uint64_t at = (uint64_t)layers[k] * layer_size + tail0;
-        if (at >= total) continue;
-        const uint64_t n = std::min(tail, total - at);
-        std::memcpy(s.data + k * tail, guest_bytes(tex.gpu + at, n, scratch), n);
+    const uint64_t align = std::max<uint64_t>(dev.props.limits.minStorageBufferOffsetAlignment, 16);
+    uint64_t max_end = tail;
+    bool fits_pool = layer_size <= UINT32_MAX;
+    for (uint32_t level = 0; level < tex.levels; level++) {
+        const LevelGeo g = level_geo(tex, level);
+        const uint64_t off = g.offset - tail0;
+        if (g.offset < tail0 || off >= tail || (off % align)) continue;
+        max_end = std::max(max_end, off + g.swizzled);
+        if (g.offset + (uint64_t)(tex.layers - 1) * layer_size + g.swizzled > total) fits_pool = false;
     }
-    const uint64_t staged = tail * layers.size();
-    st_bytes += (int64_t)staged;
+    static const bool no_pool_astc = getenv("RX_VK_ASTC_STAGE") != nullptr;
+    BufferRef pool_src{};
+    if (!no_pool_astc && fits_pool && !(tex.gpu < (1ull << 40) && memory_has_shadow(tex.gpu, total))) {
+        const BufferRef cand = gpu_buffer(tex.gpu, total);
+        if (cand && ((cand.offset + tail0) % align) == 0 && (layer_size % align) == 0) pool_src = cand;
+    }
+    VkBuffer src_buf = pool_src.buffer;
+    uint64_t src_base = pool_src.offset;
+    uint64_t src_range = total;
+    uint64_t stride = layer_size;
+    if (!pool_src) {
+        const uint64_t staged = tail * layers.size();
+        const uint64_t alloc_bytes = staged + (max_end - tail);
+        const Staging s = staging(alloc_bytes, std::max<uint64_t>(256, dev.props.limits.minStorageBufferOffsetAlignment));
+        if (!s.buffer) return false;
+        std::vector<uint8_t> scratch;
+        for (size_t k = 0; k < layers.size(); k++) {
+            const uint64_t at = (uint64_t)layers[k] * layer_size + tail0;
+            if (at >= total) {
+                std::memset(s.data + k * tail, 0, tail);
+                continue;
+            }
+            const uint64_t n = std::min(tail, total - at);
+            std::memcpy(s.data + k * tail, guest_bytes(tex.gpu + at, n, scratch), n);
+            if (n < tail) std::memset(s.data + k * tail + n, 0, tail - n);
+        }
+        if (alloc_bytes > staged) std::memset(s.data + staged, 0, alloc_bytes - staged);
+        st_bytes += (int64_t)staged;
+        src_buf = s.buffer;
+        src_base = s.offset;
+        src_range = alloc_bytes;
+        stride = tail;
+    }
     VkCommandBuffer cmd = upload_cmd();
+    if (pool_src) full_barrier(cmd);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, astc_pipe);
-    const uint64_t align = std::max<uint64_t>(dev.props.limits.minStorageBufferOffsetAlignment, 4);
     if (tex.bc) {   // (decoded into the scratch a run of consecutive layers at a time, re-encoded, copied in)
         bc_scratch_layout(cmd);
         for (uint32_t level = 0; level < tex.levels; level++) {
@@ -578,7 +610,7 @@ bool upload_astc_gpu(Texture& tex, uint64_t total, const Ranges* dirty) {
             const uint32_t iw = std::max(1u, tex.width >> level), ih = std::max(1u, tex.height >> level);
             AstcPush pc{};
             pc.block_dims[0] = (uint32_t)tex.block_w, pc.block_dims[1] = (uint32_t)tex.block_h;
-            pc.layer_stride = (uint32_t)tail;
+            pc.layer_stride = (uint32_t)stride;
             const uint32_t gobs_x = (g.tw * 16 + 63) >> 6;
             pc.x_shift = 9 + g.tile_h + g.tile_d;
             pc.block_size = gobs_x << pc.x_shift;
@@ -590,8 +622,8 @@ bool upload_astc_gpu(Texture& tex, uint64_t total, const Ranges* dirty) {
                 while (k1 < layers.size() && k1 - k0 < kBcLayers && layers[k1] == layers[k1 - 1] + 1) k1++;
                 const uint32_t n = (uint32_t)(k1 - k0);
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, astc_pipe);
-                const uint64_t from = k0 * tail + off;
-                VkDescriptorBufferInfo bi{s.buffer, s.offset + from, staged - from};
+                const uint64_t from = (pool_src ? (uint64_t)layers[k0] * stride + tail0 : k0 * stride) + off;
+                VkDescriptorBufferInfo bi{src_buf, src_base + from, src_range - from};
                 VkDescriptorImageInfo ii{VK_NULL_HANDLE, bc_scratch_view, VK_IMAGE_LAYOUT_GENERAL};
                 VkWriteDescriptorSet w[2]{{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}, {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}};
                 w[0].dstBinding = 0, w[0].descriptorCount = 1, w[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -614,7 +646,7 @@ bool upload_astc_gpu(Texture& tex, uint64_t total, const Ranges* dirty) {
         if (g.offset < tail0 || off >= tail || (off % align)) continue;
         AstcPush pc{};
         pc.block_dims[0] = (uint32_t)tex.block_w, pc.block_dims[1] = (uint32_t)tex.block_h;
-        pc.layer_stride = (uint32_t)tail;
+        pc.layer_stride = (uint32_t)stride;
         const uint32_t gobs_x = (g.tw * 16 + 63) >> 6;
         pc.x_shift = 9 + g.tile_h + g.tile_d;
         pc.block_size = gobs_x << pc.x_shift;
@@ -624,8 +656,9 @@ bool upload_astc_gpu(Texture& tex, uint64_t total, const Ranges* dirty) {
         for (size_t k = 0; k < (all ? 1 : layers.size()); k++) {
             const VkImageView view = astc_level_view(&tex, level, all ? ~0u : layers[k]);
             if (!view) return false;
-            const uint64_t from = (all ? 0 : k * tail) + off;
-            VkDescriptorBufferInfo bi{s.buffer, s.offset + from, staged - from};
+            const uint64_t layer_idx = all ? 0 : (pool_src ? (uint64_t)layers[k] : k);
+            const uint64_t from = layer_idx * stride + (pool_src ? tail0 : 0) + off;
+            VkDescriptorBufferInfo bi{src_buf, src_base + from, src_range - from};
             VkDescriptorImageInfo ii{VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_GENERAL};
             VkWriteDescriptorSet w[2]{{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}, {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}};
             w[0].dstBinding = 0, w[0].descriptorCount = 1, w[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -1086,9 +1119,10 @@ bool upload(Texture& tex, const Ranges* dirty) {
                         std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - u0).count();
                 }
                 if (tex.astc) {
-                    Tegra::Texture::ASTC::DecompressSerial(std::span<const uint8_t>(blocks, block_bytes), g.w, px_h, g.d,
-                                                           (u32)tex.block_w, (u32)tex.block_h,
-                                                           std::span<uint8_t>(out, (size_t)g.w * px_h * g.d * 4));
+                    const auto decomp = block_bytes >= (16u << 10) ? Tegra::Texture::ASTC::Decompress
+                                                                   : Tegra::Texture::ASTC::DecompressSerial;
+                    decomp(std::span<const uint8_t>(blocks, block_bytes), g.w, px_h, g.d, (u32)tex.block_w,
+                           (u32)tex.block_h, std::span<uint8_t>(out, (size_t)g.w * px_h * g.d * 4));
                 } else if (widen_from) {
                     widen_rows(out, blocks, (size_t)g.tw * th * g.td, src_bpb, out_bpb);
                 }
@@ -1560,7 +1594,7 @@ VkCommandBuffer upload_command_buffer() {
 }
 bool texture_uploads_recorded() {
     if (memory_rb_refresh(up_cmd)) up_used = true;   // (PR 430: readback pages from guest memory, last of the uploads)
-    memory_table_flush();   // (vk_memory.cpp: the page table's changes, after this recording's mirror copies)
+    if (memory_table_flush()) up_used = true;   // (vk_memory.cpp: the page table's changes, after this recording's mirror copies)
     if (up_used) full_barrier(up_cmd);   // (before the recording that reads them)
     return up_used;
 }

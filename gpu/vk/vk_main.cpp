@@ -192,6 +192,7 @@ bool create_device() {
         optional(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME, dev.checkpoints);
     optional(VK_EXT_DEVICE_FAULT_EXTENSION_NAME, dev.device_fault);
     optional(VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME, dev.coop_matrix);
+    optional(VK_KHR_WORKGROUP_MEMORY_EXPLICIT_LAYOUT_EXTENSION_NAME, dev.workgroup_explicit_layout);
 
     // the queue: one family for graphics, compute and transfer
     vkGetPhysicalDeviceQueueFamilyProperties(dev.physical, &n, nullptr);
@@ -242,11 +243,18 @@ bool create_device() {
     if (dev.view_2d_of_3d) *tail = &v2d3d, tail = &v2d3d.pNext;
     VkPhysicalDeviceCooperativeMatrixFeaturesKHR coop{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_KHR};
     if (dev.coop_matrix) *tail = &coop, tail = &coop.pNext;
+    VkPhysicalDeviceWorkgroupMemoryExplicitLayoutFeaturesKHR wg_layout{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_WORKGROUP_MEMORY_EXPLICIT_LAYOUT_FEATURES_KHR};
+    if (dev.workgroup_explicit_layout) *tail = &wg_layout, tail = &wg_layout.pNext;
     vkGetPhysicalDeviceFeatures2(dev.physical, &f);
     dev.view_2d_of_3d = dev.view_2d_of_3d && v2d3d.sampler2DViewOf3D;
     coop.cooperativeMatrixRobustBufferAccess = VK_FALSE;
     dev.coop_matrix = dev.coop_matrix && coop.cooperativeMatrix &&
                       f12.vulkanMemoryModel && f12.vulkanMemoryModelDeviceScope;
+    dev.workgroup_explicit_layout = dev.workgroup_explicit_layout && wg_layout.workgroupMemoryExplicitLayout &&
+                                    wg_layout.workgroupMemoryExplicitLayoutScalarBlockLayout;
+    dev.workgroup_explicit_8bit = dev.workgroup_explicit_layout && wg_layout.workgroupMemoryExplicitLayout8BitAccess;
+    dev.workgroup_explicit_16bit = dev.workgroup_explicit_layout && wg_layout.workgroupMemoryExplicitLayout16BitAccess;
     // (bounds-checked buffer access: an out-of-range access dropped instead of faulting the device. On by default now: the GPU
     // culling pass 53caac5f faulted the device while a save loaded, about one start in three, and the scene's lighting read garbage
     // for single frames (the black flashes); with it, neither in A/B runs at the same GPU time. Lichii's OoT branch keeps it on too.
@@ -287,6 +295,8 @@ bool create_device() {
         vkGetPhysicalDeviceProperties2(dev.physical, &p2);
         const bool pin = f13.subgroupSizeControl && sc.minSubgroupSize <= 32 && sc.maxSubgroupSize >= 32 && !getenv("RX_VK_NO_SUBGROUP_PIN");
         dev.sg32_stages = pin ? sc.requiredSubgroupSizeStages : 0;
+        dev.subgroup_shuffle_relative = (sg.supportedOperations & VK_SUBGROUP_FEATURE_SHUFFLE_RELATIVE_BIT) != 0;
+        dev.subgroup_quad = (sg.supportedOperations & VK_SUBGROUP_FEATURE_QUAD_BIT) != 0;
         logf("vk: subgroups: default %u lanes, %u-%u, pinned to 32 on stages %#x", sg.subgroupSize, sc.minSubgroupSize, sc.maxSubgroupSize,
              (unsigned)dev.sg32_stages);
     }

@@ -21,11 +21,15 @@ void TranslatorVisitor::ApplyRegisterMap(u64 insn) {
         const u32 length = static_cast<u32>((insn >> (36 + 2 * i)) & 3) + 1;
         for (u32 k = 0; k < length && number + k < 255 && target + k < 255; ++k) {
             register_map[number + k] = static_cast<u16>(256 + target + k);
+            has_register_map = true;
         }
     }
 }
 
 IR::Reg TranslatorVisitor::MapReg(IR::Reg reg) const {
+    if (!has_register_map) {
+        return reg;
+    }
     const size_t index{IR::RegIndex(reg)};
     if (index < register_map.size() && register_map[index] != 0) {
         return static_cast<IR::Reg>(register_map[index]);

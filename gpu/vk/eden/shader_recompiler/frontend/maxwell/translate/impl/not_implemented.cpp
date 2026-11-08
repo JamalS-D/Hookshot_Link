@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: Copyright 2021 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "common/bit_field.h"
 #include "common/common_types.h"
 #include "shader_recompiler/exception.h"
 #include "shader_recompiler/frontend/maxwell/opcodes.h"
@@ -95,8 +96,15 @@ void TranslatorVisitor::IDP_imm(u64) {
     ThrowNotImplemented(Opcode::IDP_imm);
 }
 
-void TranslatorVisitor::IMAD_reg(u64) {
-    ThrowNotImplemented(Opcode::IMAD_reg);
+void TranslatorVisitor::IMAD_reg(u64 insn) {
+    union {
+        u64 raw;
+        BitField<0, 8, IR::Reg> dest_reg;
+        BitField<39, 8, IR::Reg> src_c;
+    } const imad{insn};
+
+    const IR::U32 product{ir.IMul(GetReg8(insn), GetReg20(insn))};
+    X(imad.dest_reg, imad.src_c == IR::Reg::RZ ? product : IR::U32{ir.IAdd(product, GetReg39(insn))});
 }
 
 void TranslatorVisitor::IMAD_rc(u64) {
@@ -107,8 +115,16 @@ void TranslatorVisitor::IMAD_cr(u64) {
     ThrowNotImplemented(Opcode::IMAD_cr);
 }
 
-void TranslatorVisitor::IMAD_imm(u64) {
-    ThrowNotImplemented(Opcode::IMAD_imm);
+void TranslatorVisitor::IMAD_imm(u64 insn) {
+    union {
+        u64 raw;
+        BitField<0, 8, IR::Reg> dest_reg;
+        BitField<20, 19, u64> imm;
+        BitField<39, 8, IR::Reg> src_c;
+    } const imad{insn};
+
+    const IR::U32 product{ir.IMul(GetReg8(insn), ir.Imm32(static_cast<u32>(imad.imm)))};
+    X(imad.dest_reg, imad.src_c == IR::Reg::RZ ? product : IR::U32{ir.IAdd(product, GetReg39(insn))});
 }
 
 void TranslatorVisitor::IMAD32I(u64) {

@@ -19,9 +19,13 @@ void Translate(Environment& env, IR::Block* block, u32 location_begin, u32 locat
         for (Location pc = location_begin; pc != location_end; ++pc) {
             u64 const insn = env.ReadInstruction(pc.Offset());
             Opcode const opcode = Decode(insn);
-            // (hookshot) the REGMAP_nx2 prefixes right before this word, whichever block they are in
-            visitor.register_map.fill(0);
-            if (opcode != Opcode::REGMAP_nx2) {
+            // (hookshot) Accumulate REGMAP_nx2 prefixes forward in-place; only scan backwards at block
+            // entry in case a basic-block split landed between a prefix and its instruction.
+            if (opcode == Opcode::REGMAP_nx2) {
+                visitor.ApplyRegisterMap(insn);
+                continue;
+            }
+            if (pc == location_begin && !visitor.has_register_map) {
                 Location prev{pc};
                 for (int guard = 0; guard < 8 && prev.Offset() >= 16; ++guard) {
                     --prev;
@@ -36,6 +40,10 @@ void Translate(Environment& env, IR::Block* block, u32 location_begin, u32 locat
 #define INST(name, cute, mask) case Opcode::name: visitor.name(insn); break;
 #include "shader_recompiler/frontend/maxwell/maxwell.inc"
 #undef OPCODE
+            }
+            if (visitor.has_register_map) {
+                visitor.register_map.fill(0);
+                visitor.has_register_map = false;
             }
         }
     }
