@@ -476,6 +476,7 @@ bool memory_table_flush() {
     table_pending.clear();
     std::stable_sort(pages.begin(), pages.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
     std::vector<uint64_t> run;
+    VkCommandBuffer cmd = upload_command_buffer();
     VkMemoryBarrier2 b{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
     b.srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
     b.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
