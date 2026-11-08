@@ -333,6 +333,115 @@ def default_jobs():
     return jobs
 
 
+def ensure_builder_tools():
+    """When run directly from a git clone on Windows without llvm-mingw or C:\\emsdk, automatically locate or download the
+    Hookshot Builder tools in %LOCALAPPDATA%\\HookshotBuilder and wire up HOOKSHOT_MINGW, RX_CPM, WGPU_NATIVE, third_party, and work."""
+    base = os.path.join(os.environ.get("LOCALAPPDATA", ROOT), "HookshotBuilder")
+    downloads = os.path.join(base, "downloads")
+    versions = os.path.join(base, "versions")
+    os.makedirs(downloads, exist_ok=True)
+    os.makedirs(versions, exist_ok=True)
+
+    tools = None
+    if os.path.isdir(versions):
+        candidates = sorted(
+            [os.path.join(versions, d, "HookshotBuilder", "tools") for d in os.listdir(versions)],
+            key=lambda p: os.path.getmtime(p) if os.path.exists(p) else 0,
+            reverse=True,
+        )
+        for cand in candidates:
+            if (os.path.isfile(os.path.join(cand, "llvm-mingw", "bin", "clang.exe")) and
+                    os.path.isdir(os.path.join(cand, "cpm")) and
+                    os.path.isdir(os.path.join(cand, "third_party", "opus"))):
+                tools = cand
+                break
+
+    if not tools:
+        import hashlib
+        import urllib.request
+        import zipfile
+        manifest_url = os.environ.get("HOOKSHOT_SETUP_LIST") or (
+            "https://github.com/NotRexed/Hookshot/releases/latest/download/hookshot-setup.txt"
+        )
+        print("build: downloading Hookshot Builder toolchain into %s ..." % base, flush=True)
+        with urllib.request.urlopen(manifest_url, timeout=60) as resp:
+            text = resp.read().decode("utf-8", errors="replace")
+        tag = None
+        parts = []
+        for raw in text.splitlines():
+            cols = raw.strip().split()
+            if len(cols) >= 2 and cols[0] == "tag":
+                tag = cols[1]
+            elif len(cols) >= 7 and cols[0] == "part":
+                parts.append((cols[1], int(cols[2]), cols[3], cols[4], cols[5], cols[6]))
+        if not tag or not parts:
+            return ""
+        install = os.path.join(versions, tag)
+        os.makedirs(install, exist_ok=True)
+        for idx, (sha, size, dest_rel, frm, to, url) in enumerate(parts, 1):
+            leaf = url.rsplit("/", 1)[-1]
+            if "dotnet" in leaf or "emsdk" in leaf:
+                continue
+            zp = os.path.join(downloads, sha + ".zip")
+            valid = False
+            if os.path.isfile(zp):
+                h = hashlib.sha256()
+                with open(zp, "rb") as f:
+                    while chunk := f.read(1 << 20):
+                        h.update(chunk)
+                valid = (h.hexdigest().lower() == sha.lower())
+            if not valid:
+                print("  [%d/%d] downloading %s (%.1f MB) ..." % (idx, len(parts), leaf, size / 1048576.0), flush=True)
+                tmp = zp + ".part"
+                urllib.request.urlretrieve(url, tmp)
+                os.replace(tmp, zp)
+            dest = install if dest_rel == "." else os.path.join(install, dest_rel.replace("/", os.sep))
+            os.makedirs(dest, exist_ok=True)
+            print("  [%d/%d] extracting %s ..." % (idx, len(parts), leaf), flush=True)
+            with zipfile.ZipFile(zp, "r") as zf:
+                zf.extractall(dest)
+            if frm != "-" and to != "-":
+                src_dir = os.path.join(dest, frm)
+                dst_dir = os.path.join(dest, to)
+                if os.path.isdir(src_dir) and not os.path.exists(dst_dir):
+                    os.replace(src_dir, dst_dir)
+        tools = os.path.join(install, "HookshotBuilder", "tools")
+
+    if not tools or not os.path.isfile(os.path.join(tools, "llvm-mingw", "bin", "clang.exe")):
+        return ""
+
+    os.environ["HOOKSHOT_MINGW"] = os.path.join(tools, "llvm-mingw")
+    os.environ.setdefault("RX_CPM", os.path.join(tools, "cpm"))
+    os.environ.setdefault("WGPU_NATIVE", os.path.join(tools, "wgpu-native"))
+
+    for sub in ("third_party", "work"):
+        src_root = os.path.join(tools, sub)
+        dst_root = os.path.join(ROOT, sub)
+        if os.path.isdir(src_root):
+            for d, _, files in os.walk(src_root):
+                rel = os.path.relpath(d, src_root)
+                target_dir = dst_root if rel == "." else os.path.join(dst_root, rel)
+                os.makedirs(target_dir, exist_ok=True)
+                for fn in files:
+                    sf = os.path.join(d, fn)
+                    df = os.path.join(target_dir, fn)
+                    if not os.path.exists(df):
+                        shutil.copy2(sf, df)
+    ver_src = os.path.join(tools, "version.txt")
+    ver_dst = os.path.join(ROOT, "version.txt")
+    if os.path.isfile(ver_src) and not os.path.exists(ver_dst):
+        shutil.copy2(ver_src, ver_dst)
+
+    bundled_py = os.path.join(tools, "python", "python.exe")
+    if os.path.isfile(bundled_py):
+        probe = subprocess.run([sys.executable, "-I", "-c", "import lz4, numpy, capstone, unicorn, zstandard"],
+                               capture_output=True)
+        if probe.returncode != 0:
+            PY[:] = [bundled_py, "-I", "-u", "-X", "utf8"]
+
+    return os.environ["HOOKSHOT_MINGW"]
+
+
 def bundled_mingw():
     """(as TotK Recomp's installer) llvm-mingw in the tools folder: its clang, headers and libraries build the game, and nothing of
     Visual Studio or the Windows SDK is needed. HOOKSHOT_MINGW set already wins; HOOKSHOT_MSVC=1: the Visual Studio route"""
@@ -351,6 +460,10 @@ def bundled_mingw():
                  "(a false alarm on unsigned programs): restore them from its quarantine or allow the Hookshot Builder folder, "
                  "then unzip HookshotBuilder.zip again and build. Visual Studio is not needed."
                  % (", ".join(missing) or "bin", os.path.join(here, "bin")))
+        elif "toolchain" not in sys.modules:
+            emsdk_clang = os.path.join(os.environ.get("EMSDK") or r"C:\emsdk", "upstream", "bin", "clang.exe")
+            if not os.path.isfile(emsdk_clang):
+                ensure_builder_tools()
     return os.environ.get("HOOKSHOT_MINGW", "")
 
 
